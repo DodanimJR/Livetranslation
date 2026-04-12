@@ -1,68 +1,47 @@
-import type { SonioxSessionConfig, SonioxTranscriptionResult, ApiResponse } from '../types/index.js';
-import { sonioxConfig, languageConfig } from './config.js';
+import type { SonioxSessionConfig, SonioxTranscriptionResult } from '../types/index.js';
+import { languageConfig } from './config.js';
 import axios from 'axios';
 
+// Backend API URL - points to the Express server
+const BACKEND_API_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000/api';
+
 export class SonioxService {
-  private apiKey: string;
-  private apiUrl: string;
   private sessionId: string | null = null;
   private websocket: WebSocket | null = null;
   private transcriptionCallback: ((result: SonioxTranscriptionResult) => void) | null = null;
   private errorCallback: ((error: Error) => void) | null = null;
-
-  constructor() {
-    this.apiKey = sonioxConfig.apiKey;
-    this.apiUrl = sonioxConfig.apiUrl;
-
-    if (!this.apiKey) {
-      console.warn('Soniox API key not configured. Please set VITE_SONIOX_API_KEY');
-    }
-  }
+  private wsUrl: string | null = null;
 
   /**
    * Create a new Soniox session for transcription
    */
   async createSession(config?: Partial<SonioxSessionConfig>): Promise<string> {
     try {
-      if (!this.apiKey) {
-        throw new Error('Soniox API key is not configured');
-      }
-
-      const sessionConfig: SonioxSessionConfig = {
-        apiKey: this.apiKey,
-        clientUuid: this.generateClientUuid(),
+      const sessionConfig = {
         languageCode: config?.languageCode || languageConfig.sourceLanguage,
         audioModel: config?.audioModel || 'default',
         enableTranslation: config?.enableTranslation !== false,
         translationLanguageCode: config?.translationLanguageCode || languageConfig.targetLanguage,
       };
 
-      // Create session via API
-      const response = await axios.post<ApiResponse<{ sessionId: string }>>(
-        `${this.apiUrl}/v1/sessions`,
-        {
-          languageCode: sessionConfig.languageCode,
-          audioModel: sessionConfig.audioModel,
-          enableTranslation: sessionConfig.enableTranslation,
-          translationLanguageCode: sessionConfig.translationLanguageCode,
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-        }
+      // Call backend API instead of Soniox directly
+      const response = await axios.post<any>(
+        `${BACKEND_API_URL}/soniox/sessions`,
+        sessionConfig
       );
 
-      if (response.data.data?.sessionId) {
-        this.sessionId = response.data.data.sessionId;
-        console.log('Soniox session created:', this.sessionId);
-        return this.sessionId;
+      const sessionId = response.data.data?.sessionId as string | undefined;
+      if (!sessionId) {
+        throw new Error('Failed to create session: No session ID returned');
       }
 
-      throw new Error('Failed to create session: No session ID returned');
+      this.sessionId = sessionId;
+      this.wsUrl = response.data.data?.wsUrl || null;
+      console.log('✅ Soniox session created:', this.sessionId);
+      return this.sessionId;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('❌ Failed to create Soniox session:', errorMessage);
       throw new Error(`Failed to create Soniox session: ${errorMessage}`);
     }
   }
@@ -73,13 +52,17 @@ export class SonioxService {
   async connectWebSocket(sessionId: string): Promise<void> {
     try {
       return new Promise((resolve, reject) => {
-        const wsUrl = this.getWebSocketUrl(sessionId);
-        
+        // Get WebSocket URL from backend if we don't have it
+        if (!this.wsUrl) {
+          this.wsUrl = this.getWebSocketUrl(sessionId);
+        }
+
         try {
-          this.websocket = new WebSocket(wsUrl);
+          console.log('🔌 Connecting to WebSocket:', this.wsUrl);
+          this.websocket = new WebSocket(this.wsUrl);
 
           this.websocket.onopen = () => {
-            console.log('Connected to Soniox WebSocket');
+            console.log('✅ Connected to Soniox WebSocket');
             resolve();
           };
 
@@ -94,6 +77,7 @@ export class SonioxService {
 
           this.websocket.onerror = (event) => {
             const error = new Error(`WebSocket error: ${event}`);
+            console.error('❌ WebSocket error:', error);
             if (this.errorCallback) {
               this.errorCallback(error);
             }
@@ -101,15 +85,17 @@ export class SonioxService {
           };
 
           this.websocket.onclose = () => {
-            console.log('Disconnected from Soniox WebSocket');
+            console.log('🔌 Disconnected from Soniox WebSocket');
           };
         } catch (wsError) {
           const errorMessage = wsError instanceof Error ? wsError.message : 'Unknown error';
+          console.error('❌ Failed to create WebSocket:', errorMessage);
           reject(new Error(`Failed to create WebSocket: ${errorMessage}`));
         }
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('❌ Failed to connect to Soniox:', errorMessage);
       throw new Error(`Failed to connect to Soniox: ${errorMessage}`);
     }
   }
@@ -120,7 +106,7 @@ export class SonioxService {
   sendAudioData(audioData: Float32Array): void {
     try {
       if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
-        console.warn('WebSocket is not open');
+        console.warn('⚠️  WebSocket is not open');
         return;
       }
 
@@ -164,21 +150,13 @@ export class SonioxService {
         this.websocket = null;
       }
 
-      if (this.sessionId && this.apiKey) {
-        await axios.post(
-          `${this.apiUrl}/v1/sessions/${this.sessionId}/end`,
-          {},
-          {
-            headers: {
-              'Authorization': `Bearer ${this.apiKey}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        );
+      if (this.sessionId) {
+        await axios.post(`${BACKEND_API_URL}/soniox/sessions/${this.sessionId}/end`);
       }
 
       this.sessionId = null;
-      console.log('Soniox session ended');
+      this.wsUrl = null;
+      console.log('✅ Soniox session ended');
     } catch (error) {
       console.error('Failed to end session:', error);
     }
@@ -217,22 +195,18 @@ export class SonioxService {
 
   /**
    * Get WebSocket URL for the session
+   * This is constructed on the backend, but we need to build it here for fallback
    */
   private getWebSocketUrl(sessionId: string): string {
-    const protocol = this.apiUrl.startsWith('https') ? 'wss' : 'ws';
-    const baseUrl = this.apiUrl.replace(/^https?:\/\//, '');
-    return `${protocol}://${baseUrl}/v1/sessions/${sessionId}/stream?key=${this.apiKey}`;
-  }
-
-  /**
-   * Generate a unique client UUID
-   */
-  private generateClientUuid(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-      const r = (Math.random() * 16) | 0;
-      const v = c === 'x' ? r : (r & 0x3) | 0x8;
-      return v.toString(16);
-    });
+    // The actual WebSocket URL is returned by the backend
+    // This is just a fallback construction
+    const backendUrl = BACKEND_API_URL.replace('/api', '');
+    const protocol = backendUrl.startsWith('https') ? 'wss' : 'ws';
+    const baseUrl = backendUrl.replace(/^https?:\/\//, '');
+    
+    // Note: The actual WebSocket connection should use the URL from backend's createSession response
+    // which contains the real Soniox WebSocket URL
+    return `${protocol}://${baseUrl}/soniox/stream/${sessionId}`;
   }
 
   /**
