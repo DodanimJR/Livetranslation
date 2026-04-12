@@ -1,5 +1,5 @@
-import type { AudioDevice, AudioLevelData } from '../types/index';
-import { audioConfig } from './config';
+import type { AudioDevice, AudioLevelData } from '../types/index.js';
+import { audioConfig } from './config.js';
 
 export class AudioCaptureService {
   private mediaStream: MediaStream | null = null;

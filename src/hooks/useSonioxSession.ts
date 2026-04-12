@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { sonioxService } from '@services/soniox';
+import { sonioxService } from '../services/soniox';
 import type { SonioxTranscriptionResult } from '../types/index';
 
 export const useSonioxSession = () => {

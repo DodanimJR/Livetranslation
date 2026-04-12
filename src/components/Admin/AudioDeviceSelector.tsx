@@ -1,6 +1,6 @@
 import React from 'react';
-import { Card } from '@components/Common/Card';
-import { Button } from '@components/Common/Button';
+import { Card } from '../Common/Card';
+import { Button } from '../Common/Button';
 import type { AudioDevice } from '../../types/index';
 
 interface AudioDeviceSelectorProps {

@@ -1,11 +1,11 @@
 import { useEffect } from 'react';
-import { Header } from '@components/Layout/Header';
-import { TabNavigation } from '@components/Layout/TabNavigation';
-import { Footer } from '@components/Layout/Footer';
-import { LiveFeed } from '@components/EndUser/LiveFeed';
-import { TranslationDisplay } from '@components/EndUser/TranslationDisplay';
-import { MicrophoneSetup } from '@components/Admin/MicrophoneSetup';
-import { Card } from '@components/Common/Card';
+import { Header } from './components/Layout/Header';
+import { TabNavigation } from './components/Layout/TabNavigation';
+import { Footer } from './components/Layout/Footer';
+import { LiveFeed } from './components/EndUser/LiveFeed';
+import { TranslationDisplay } from './components/EndUser/TranslationDisplay';
+import { MicrophoneSetup } from './components/Admin/MicrophoneSetup';
+import { Card } from './components/Common/Card';
 import { useAppStore } from './context/appStore';
 
 function App() {

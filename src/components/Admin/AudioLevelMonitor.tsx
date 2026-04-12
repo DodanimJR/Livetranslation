@@ -1,5 +1,5 @@
 import React from 'react';
-import { Card } from '@components/Common/Card';
+import { Card } from '../Common/Card';
 import type { AudioLevelData } from '../../types/index';
 
 interface AudioLevelMonitorProps {

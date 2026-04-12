@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { audioCaptureService } from '@services/audioCapture';
+import { audioCaptureService } from '../services/audioCapture';
 import type { AudioDevice, AudioLevelData } from '../types/index';
 
 export const useAudioCapture = () => {

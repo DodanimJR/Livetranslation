@@ -1,5 +1,5 @@
 import React from 'react';
-import { churchConfig } from '@services/config';
+import { churchConfig } from '../../services/config';
 
 interface HeaderProps {
   onStatusChange?: (status: string) => void;

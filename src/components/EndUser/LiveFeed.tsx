@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Card } from '@components/Common/Card';
+import { Card } from '../Common/Card';
 import type { TranscriptionSegment, TranslationSegment } from '../../types/index';
 
 interface LiveFeedProps {

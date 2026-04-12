@@ -1,5 +1,5 @@
-import type { SonioxSessionConfig, SonioxTranscriptionResult, ApiResponse } from '../types/index';
-import { sonioxConfig, languageConfig } from './config';
+import type { SonioxSessionConfig, SonioxTranscriptionResult, ApiResponse } from '../types/index.js';
+import { sonioxConfig, languageConfig } from './config.js';
 import axios from 'axios';
 
 export class SonioxService {

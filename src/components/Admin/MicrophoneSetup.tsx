@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Card } from '@components/Common/Card';
-import { Button } from '@components/Common/Button';
-import { Alert } from '@components/Common/Alert';
+import { Card } from '../Common/Card';
+import { Button } from '../Common/Button';
+import { Alert } from '../Common/Alert';
 import { AudioDeviceSelector } from './AudioDeviceSelector';
 import { AudioLevelMonitor } from './AudioLevelMonitor';
-import { useAudioCapture } from '@hooks/useAudioCapture';
-import { useSonioxSession } from '@hooks/useSonioxSession';
+import { useAudioCapture } from '../../hooks/useAudioCapture';
+import { useSonioxSession } from '../../hooks/useSonioxSession';
 
 export const MicrophoneSetup: React.FC = () => {
   const [isStarting, setIsStarting] = useState(false);
