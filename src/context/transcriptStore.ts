@@ -19,6 +19,8 @@ interface TranscriptState {
   error: string | null;
 
   addEntry: (entry: TranscriptEntry) => void;
+  /** Replace an existing entry by id, or append if not found. */
+  upsertEntry: (entry: TranscriptEntry) => void;
   setConnected: (connected: boolean) => void;
   setRecording: (recording: boolean) => void;
   setLive: (live: boolean) => void;
@@ -35,6 +37,17 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
 
   addEntry: (entry) =>
     set((state) => ({ entries: [...state.entries, entry] })),
+
+  upsertEntry: (entry) =>
+    set((state) => {
+      const idx = state.entries.findIndex((e) => e.id === entry.id);
+      if (idx === -1) {
+        return { entries: [...state.entries, entry] };
+      }
+      const updated = [...state.entries];
+      updated[idx] = entry;
+      return { entries: updated };
+    }),
 
   setConnected: (connected) =>
     set({ isConnected: connected }),

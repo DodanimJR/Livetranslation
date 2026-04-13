@@ -57,31 +57,46 @@ function groupBySpeaker(entries: TranscriptEntry[]): SpeakerGroup[] {
 export const LiveFeed: React.FC = () => {
   const { entries, isLive, addEntry, setLive, clear } = useTranscriptStore();
   const { darkMode, textSize } = usePreferencesStore();
-  const endRef = useRef<HTMLDivElement>(null);
+  // Refs to the scrollable container divs inside each panel
+  const translationScrollRef = useRef<HTMLDivElement>(null);
+  const transcriptionScrollRef = useRef<HTMLDivElement>(null);
   const seenIds = useRef(new Set<string>());
 
-  // Connect to the broadcast WebSocket on mount
+  // Connect to the broadcast WebSocket once on mount.
+  // We use a ref to the store actions so the effect never re-runs
+  // (Zustand actions are stable but listing them as deps risks reconnecting
+  // if the store reference ever changes).
+  const storeRef = useRef({ addEntry, setLive, clear });
+  storeRef.current = { addEntry, setLive, clear };
+
   useEffect(() => {
     broadcastClient.connect({
       onEntry: (entry) => {
         if (seenIds.current.has(entry.id)) return;
         seenIds.current.add(entry.id);
-        addEntry(entry);
+        storeRef.current.addEntry(entry);
       },
-      onStatus: (live) => setLive(live),
-      onClear: () => { seenIds.current.clear(); clear(); },
+      onStatus: (live) => storeRef.current.setLive(live),
+      onClear: () => { seenIds.current.clear(); storeRef.current.clear(); },
     });
     return () => broadcastClient.disconnect();
-  }, [addEntry, setLive, clear]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Track locally-added ids for dedup
   useEffect(() => {
     for (const e of entries) seenIds.current.add(e.id);
   }, [entries]);
 
-  // Auto-scroll
+  // Auto-scroll each panel's container to the bottom whenever entries change.
+  // This keeps new text visible inside the panel without scrolling the page.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const scrollToBottom = (el: HTMLDivElement | null) => {
+      if (!el) return;
+      el.scrollTop = el.scrollHeight;
+    };
+    scrollToBottom(translationScrollRef.current);
+    scrollToBottom(transcriptionScrollRef.current);
   }, [entries]);
 
   const transcriptions = entries.filter((e) => e.type === 'transcription');
@@ -112,15 +127,17 @@ export const LiveFeed: React.FC = () => {
           )}
         </div>
 
-        <div className={`p-4 sm:p-6 min-h-[40vh] max-h-[60vh] overflow-y-auto ${
-          darkMode ? 'bg-gray-800/50' : 'bg-blue-50/50'
-        }`}>
+        <div
+          ref={translationScrollRef}
+          className={`p-4 sm:p-6 min-h-[40vh] max-h-[60vh] overflow-y-auto ${
+            darkMode ? 'bg-gray-800/50' : 'bg-blue-50/50'
+          }`}
+        >
           {translations.length === 0 ? (
             <EmptyState text={isLive ? 'Escuchando...' : 'Esperando traduccion...'} dark={darkMode} />
           ) : (
             <SpeakerGroupList groups={translationGroups} textSize={textSize} dark={darkMode} />
           )}
-          <div ref={endRef} />
         </div>
       </div>
 
@@ -136,9 +153,12 @@ export const LiveFeed: React.FC = () => {
           </h2>
         </div>
 
-        <div className={`p-4 sm:p-6 min-h-[20vh] max-h-[40vh] overflow-y-auto ${
-          darkMode ? 'bg-gray-800/50' : 'bg-gray-50/50'
-        }`}>
+        <div
+          ref={transcriptionScrollRef}
+          className={`p-4 sm:p-6 min-h-[20vh] max-h-[40vh] overflow-y-auto ${
+            darkMode ? 'bg-gray-800/50' : 'bg-gray-50/50'
+          }`}
+        >
           {transcriptions.length === 0 ? (
             <EmptyState text={isLive ? 'Escuchando...' : 'Esperando transcripcion...'} dark={darkMode} />
           ) : (
@@ -192,12 +212,21 @@ function SpeakerGroupList({ groups, textSize, dark }: {
               </div>
             )}
 
-            {/* Text block */}
-            <p className={`whitespace-pre-wrap ${textSizeClass[textSize]} ${
+            {/* Text block — each entry is now a full sentence (or growing sentence).
+                Non-final entries are shown in italic to indicate they are still
+                being transcribed / translated. */}
+            <div className={`space-y-1 ${textSizeClass[textSize]} ${
               dark ? 'text-gray-100' : 'text-gray-900'
             }`}>
-              {group.entries.map((e) => e.text).join('')}
-            </p>
+              {group.entries.map((e) => (
+                <p
+                  key={e.id}
+                  className={`whitespace-pre-wrap ${!e.isFinal ? 'italic opacity-70' : ''}`}
+                >
+                  {e.text}
+                </p>
+              ))}
+            </div>
           </div>
         );
       })}

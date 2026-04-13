@@ -79,6 +79,15 @@ export class SonioxService {
       await this.fetchTemporaryKey();
     }
 
+    // Close any existing connection before opening a new one.
+    // Without this, the old socket stays open as a "ghost" and delivers
+    // duplicate tokens that cause garbled concatenated output.
+    if (this.websocket) {
+      this.websocket.onmessage = null; // silence it immediately
+      this.websocket.close();
+      this.websocket = null;
+    }
+
     return new Promise((resolve, reject) => {
       this.websocket = new WebSocket(SONIOX_WS_URL);
 
@@ -189,8 +198,12 @@ export class SonioxService {
       audio_format: 'pcm_s16le',
       sample_rate: 16000,
       num_channels: 1,
-      language_hints: [sourceLanguage, targetLanguage],
-      enable_language_identification: true,
+      // Fix: only hint the source language. Adding the target language here
+      // confuses Soniox into auto-detecting translated tokens as a second
+      // input language, producing garbled mixed-language output.
+      // enable_language_identification is intentionally omitted — it must not
+      // be combined with one_way translation when the source language is known.
+      language_hints: [sourceLanguage],
       enable_speaker_diarization: true,
       enable_endpoint_detection: true,
       context: {

@@ -8,6 +8,7 @@
     "dev:server": "node --import tsx/esm server/index.ts",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:server\"",
     "build": "vite build",
+    "build:server": "tsc -p server/tsconfig.json --outDir dist/server",
     "preview": "vite preview",
     "lint": "tsc --noEmit"
   },
