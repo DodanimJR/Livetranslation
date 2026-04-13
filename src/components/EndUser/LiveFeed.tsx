@@ -1,19 +1,14 @@
 import React, { useEffect, useRef } from 'react';
 import { Card } from '../Common/Card';
-import { useSonioxSession, TranscriptEntry } from '../../hooks/useSonioxSession';
+import { useTranscriptStore, TranscriptEntry } from '../../context/transcriptStore';
 
 /**
- * LiveFeed renders the real-time transcript that Soniox produces.
- *
- * Tokens with translation_status === 'original' or 'none' are transcription.
- * Tokens with translation_status === 'translation' are translations.
- *
- * The useSonioxSession hook already separates them for us via `entries`.
- * The hook is shared across the app via the singleton sonioxService,
- * so tokens produced by the Admin tab appear here automatically.
+ * LiveFeed displays the real-time transcription and translation
+ * produced by Soniox. It reads from the shared Zustand store so
+ * tokens added by the Admin tab appear here automatically.
  */
 export const LiveFeed: React.FC = () => {
-  const { entries, isConnected } = useSonioxSession();
+  const { entries, isConnected } = useTranscriptStore();
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -68,7 +63,7 @@ export const LiveFeed: React.FC = () => {
   );
 };
 
-/* helpers */
+/* ─── helpers ───────────────────────────────────────────── */
 
 function EmptyState({ text }: { text: string }) {
   return (
@@ -80,11 +75,9 @@ function EmptyState({ text }: { text: string }) {
 
 function TokenList({ entries }: { entries: TranscriptEntry[] }) {
   return (
-    <div className="space-y-1 text-lg leading-relaxed text-gray-900">
+    <div className="text-lg leading-relaxed text-gray-900">
       {entries.map((entry) => (
-        <span key={entry.id}>
-          {entry.text}
-        </span>
+        <span key={entry.id}>{entry.text}</span>
       ))}
     </div>
   );

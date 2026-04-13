@@ -1,38 +1,28 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { sonioxService, SonioxToken } from '../services/soniox';
+import { useTranscriptStore } from '../context/transcriptStore';
 
-export interface TranscriptEntry {
-  id: string;
-  text: string;
-  language: string;
-  type: 'transcription' | 'translation';
-  sourceLanguage?: string;
-  speaker?: string;
-  timestamp: number;
-  isFinal: boolean;
-}
+// Re-export the type so existing imports still work
+export type { TranscriptEntry } from '../context/transcriptStore';
 
 export const useSonioxSession = () => {
-  const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [entries, setEntries] = useState<TranscriptEntry[]>([]);
 
-  // Accumulate non-final text so we can show "live" partial results
-  const nonFinalRef = useRef<string>('');
+  // Shared state – every component that calls useTranscriptStore (or this
+  // hook) will see the same entries, isConnected, and error values.
+  const { entries, isConnected, error, addEntry, setConnected, setError, clear } =
+    useTranscriptStore();
 
-  const handleTokens = useCallback((tokens: SonioxToken[], _isFinal: boolean) => {
-    for (const token of tokens) {
-      if (!token.text) continue;
+  const handleTokens = useCallback(
+    (tokens: SonioxToken[]) => {
+      for (const token of tokens) {
+        if (!token.text) continue;
 
-      const isTranslation = token.translation_status === 'translation';
-      const type = isTranslation ? 'translation' : 'transcription';
+        const isTranslation = token.translation_status === 'translation';
+        const type = isTranslation ? 'translation' : 'transcription';
 
-      if (token.is_final) {
-        // Final token: commit to the transcript list
-        setEntries((prev) => [
-          ...prev,
-          {
+        if (token.is_final) {
+          addEntry({
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             text: token.text,
             language: token.language || 'unknown',
@@ -41,63 +31,63 @@ export const useSonioxSession = () => {
             speaker: token.speaker,
             timestamp: Date.now(),
             isFinal: true,
-          },
-        ]);
-      } else {
-        // Non-final: accumulate for live preview
-        nonFinalRef.current += token.text;
+          });
+        }
+        // Non-final tokens are intentionally skipped for now – they update
+        // too fast to render individually. A "live preview" line could be
+        // added later via a separate ref if desired.
       }
-    }
-  }, []);
+    },
+    [addEntry]
+  );
 
   // Connect to Soniox WebSocket (via temporary key from backend)
-  const connect = useCallback(async (sourceLanguage?: string, targetLanguage?: string) => {
-    try {
-      setError(null);
-      setIsLoading(true);
+  const connect = useCallback(
+    async (sourceLanguage?: string, targetLanguage?: string) => {
+      try {
+        setError(null);
+        setIsLoading(true);
 
-      await sonioxService.connect(
-        {
-          onTokens: handleTokens,
-          onError: (err) => setError(err.message),
-          onFinished: () => {
-            console.log('Soniox session finished');
-            setIsConnected(false);
+        await sonioxService.connect(
+          {
+            onTokens: handleTokens,
+            onError: (err) => setError(err.message),
+            onFinished: () => {
+              console.log('Soniox session finished');
+              setConnected(false);
+            },
           },
-        },
-        { sourceLanguage, targetLanguage }
-      );
+          { sourceLanguage, targetLanguage }
+        );
 
-      setIsConnected(true);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      setError(msg);
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [handleTokens]);
+        setConnected(true);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        setError(msg);
+        throw err;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [handleTokens, setConnected, setError]
+  );
 
-  // Send raw PCM audio
   const sendAudio = useCallback((pcmInt16: Int16Array) => {
     sonioxService.sendAudio(pcmInt16);
   }, []);
 
-  // Graceful finish (sends empty frame, waits for remaining tokens)
   const finish = useCallback(() => {
     sonioxService.finish();
   }, []);
 
-  // Hard disconnect
   const disconnect = useCallback(() => {
     sonioxService.disconnect();
-    setIsConnected(false);
-  }, []);
+    setConnected(false);
+  }, [setConnected]);
 
   const clearEntries = useCallback(() => {
-    setEntries([]);
-    nonFinalRef.current = '';
-  }, []);
+    clear();
+  }, [clear]);
 
   return {
     isConnected,
