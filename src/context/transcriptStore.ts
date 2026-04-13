@@ -13,11 +13,15 @@ export interface TranscriptEntry {
 
 interface TranscriptState {
   entries: TranscriptEntry[];
-  isConnected: boolean;
+  isConnected: boolean;   // Soniox WebSocket is open (admin only)
+  isRecording: boolean;   // audio is actively being captured + streamed
+  isLive: boolean;        // broadcast session is live (viewers see this)
   error: string | null;
 
   addEntry: (entry: TranscriptEntry) => void;
   setConnected: (connected: boolean) => void;
+  setRecording: (recording: boolean) => void;
+  setLive: (live: boolean) => void;
   setError: (error: string | null) => void;
   clear: () => void;
 }
@@ -25,6 +29,8 @@ interface TranscriptState {
 export const useTranscriptStore = create<TranscriptState>((set) => ({
   entries: [],
   isConnected: false,
+  isRecording: false,
+  isLive: false,
   error: null,
 
   addEntry: (entry) =>
@@ -32,6 +38,12 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
 
   setConnected: (connected) =>
     set({ isConnected: connected }),
+
+  setRecording: (recording) =>
+    set({ isRecording: recording }),
+
+  setLive: (live) =>
+    set({ isLive: live }),
 
   setError: (error) =>
     set({ error }),

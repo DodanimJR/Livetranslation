@@ -37,6 +37,7 @@
     "tailwindcss": "^4.2.2",
     "typescript": "^6.0.2",
     "vite": "^8.0.8",
+    "ws": "^8.20.0",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
@@ -44,6 +45,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^25.6.0",
+    "@types/ws": "^8.18.1",
     "concurrently": "^9.2.1",
     "tsx": "^4.21.0",
     "vite-plugin-env-compatible": "^2.0.1"

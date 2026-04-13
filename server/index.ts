@@ -1,8 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import http from 'http';
 import { errorHandler } from './middleware/errorHandler.js';
 import sonioxRoutes from './routes/soniox.js';
+import authRoutes from './routes/auth.js';
+import broadcastRoutes from './routes/broadcast.js';
+import { initBroadcastServer } from './services/broadcastServer.js';
 
 // Load environment variables
 dotenv.config();
@@ -20,12 +24,12 @@ app.use(cors({
   origin: corsOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 app.use(express.json());
 
-// Health check endpoint
+// Health check
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
@@ -36,6 +40,8 @@ app.get('/health', (_req, res) => {
 
 // API Routes
 app.use('/api/soniox', sonioxRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/broadcast', broadcastRoutes);
 
 // 404 handler
 app.use((req: express.Request, res: express.Response) => {
@@ -48,15 +54,21 @@ app.use((req: express.Request, res: express.Response) => {
 // Error handler (must be last)
 app.use(errorHandler);
 
-// Start server
-app.listen(PORT, () => {
+// Create HTTP server and attach WebSocket broadcast server
+const server = http.createServer(app);
+const wss = initBroadcastServer(server);
+
+server.listen(PORT, () => {
   const hasKey = !!process.env.SONIOX_API_KEY;
+  const hasAdminPw = !!process.env.ADMIN_PASSWORD;
   console.log(`
   Iglesia Adventista UNADECA - Backend Server
 
-  Server:  http://localhost:${PORT}
+  HTTP:    http://localhost:${PORT}
+  WS:      ws://localhost:${PORT}  (broadcast)
   CORS:    ${corsOrigins.join(', ')}
-  Soniox:  ${hasKey ? 'API key configured' : 'WARNING: SONIOX_API_KEY missing!'}
+  Soniox:  ${hasKey ? 'configured' : 'WARNING: SONIOX_API_KEY missing!'}
+  Admin:   ${hasAdminPw ? 'password set' : 'WARNING: ADMIN_PASSWORD missing!'}
   `);
 });
 

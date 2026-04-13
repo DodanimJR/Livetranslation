@@ -1,6 +1,9 @@
 import { useCallback, useState } from 'react';
 import { sonioxService, SonioxToken } from '../services/soniox';
 import { useTranscriptStore } from '../context/transcriptStore';
+import axios from 'axios';
+
+const BACKEND_API_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000/api';
 
 // Re-export the type so existing imports still work
 export type { TranscriptEntry } from '../context/transcriptStore';
@@ -8,9 +11,7 @@ export type { TranscriptEntry } from '../context/transcriptStore';
 export const useSonioxSession = () => {
   const [isLoading, setIsLoading] = useState(false);
 
-  // Shared state – every component that calls useTranscriptStore (or this
-  // hook) will see the same entries, isConnected, and error values.
-  const { entries, isConnected, error, addEntry, setConnected, setError, clear } =
+  const { entries, isConnected, isRecording, error, addEntry, setConnected, setRecording, setError, clear } =
     useTranscriptStore();
 
   const handleTokens = useCallback(
@@ -22,26 +23,30 @@ export const useSonioxSession = () => {
         const type = isTranslation ? 'translation' : 'transcription';
 
         if (token.is_final) {
-          addEntry({
+          const entry = {
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             text: token.text,
             language: token.language || 'unknown',
-            type,
+            type: type as 'transcription' | 'translation',
             sourceLanguage: token.source_language,
             speaker: token.speaker,
             timestamp: Date.now(),
             isFinal: true,
+          };
+
+          // Add to local store (admin sees it immediately)
+          addEntry(entry);
+
+          // Broadcast to all viewers via backend
+          axios.post(`${BACKEND_API_URL}/broadcast/entry`, entry).catch(() => {
+            // non-critical – viewers just won't see this token
           });
         }
-        // Non-final tokens are intentionally skipped for now – they update
-        // too fast to render individually. A "live preview" line could be
-        // added later via a separate ref if desired.
       }
     },
     [addEntry]
   );
 
-  // Connect to Soniox WebSocket (via temporary key from backend)
   const connect = useCallback(
     async (sourceLanguage?: string, targetLanguage?: string) => {
       try {
@@ -91,6 +96,7 @@ export const useSonioxSession = () => {
 
   return {
     isConnected,
+    isRecording,
     isLoading,
     error,
     entries,
@@ -99,5 +105,6 @@ export const useSonioxSession = () => {
     finish,
     disconnect,
     clearEntries,
+    setRecording,
   };
 };

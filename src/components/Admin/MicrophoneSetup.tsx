@@ -6,12 +6,18 @@ import { AudioDeviceSelector } from './AudioDeviceSelector';
 import { AudioLevelMonitor } from './AudioLevelMonitor';
 import { useAudioCapture } from '../../hooks/useAudioCapture';
 import { useSonioxSession } from '../../hooks/useSonioxSession';
+import { useTranscriptStore } from '../../context/transcriptStore';
 import { sonioxService } from '../../services/soniox';
 import { audioCaptureService } from '../../services/audioCapture';
+import axios from 'axios';
+
+const BACKEND_API_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000/api';
 
 export const MicrophoneSetup: React.FC = () => {
   const [isStarting, setIsStarting] = useState(false);
-  const [isRecordingActive, setIsRecordingActive] = useState(false);
+
+  // isRecording lives in the global store so it survives tab switches
+  const { isRecording, setRecording } = useTranscriptStore();
 
   const {
     audioDevices,
@@ -38,20 +44,20 @@ export const MicrophoneSetup: React.FC = () => {
     try {
       setIsStarting(true);
 
-      // 1. Init mic (no-ops if already initialized)
-      await initializeAudio(selectedDevice?.deviceId);
+      if (!isInitialized) {
+        await initializeAudio(selectedDevice?.deviceId);
+      }
 
-      // 2. Get temp key + open WebSocket to Soniox
       await connectSoniox('es', 'en');
 
-      // 3. Start streaming mic audio directly into the WebSocket.
-      //    We call the singleton services directly to avoid any
-      //    stale closure issues with React hooks.
       audioCaptureService.start((pcmInt16: Int16Array) => {
         sonioxService.sendAudio(pcmInt16);
       });
 
-      setIsRecordingActive(true);
+      setRecording(true);
+
+      // Tell viewers the session is live
+      axios.post(`${BACKEND_API_URL}/broadcast/status`, { isLive: true }).catch(() => {});
     } catch (error) {
       console.error('Failed to start broadcast:', error);
     } finally {
@@ -64,7 +70,10 @@ export const MicrophoneSetup: React.FC = () => {
       stopCapture();
       finishSoniox();
       setTimeout(() => disconnectSoniox(), 2000);
-      setIsRecordingActive(false);
+      setRecording(false);
+
+      // Tell viewers the session ended
+      axios.post(`${BACKEND_API_URL}/broadcast/status`, { isLive: false }).catch(() => {});
     } catch (error) {
       console.error('Failed to stop broadcast:', error);
     }
@@ -89,7 +98,7 @@ export const MicrophoneSetup: React.FC = () => {
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
             <StatusIndicator label="Audio" active={isInitialized} />
             <StatusIndicator label="Soniox" active={isConnected} />
-            <StatusIndicator label="Grabando" active={isRecordingActive} />
+            <StatusIndicator label="Grabando" active={isRecording} />
           </div>
         </div>
       </Card>
@@ -100,13 +109,13 @@ export const MicrophoneSetup: React.FC = () => {
       <Card padding="lg">
         <div className="flex gap-3">
           <Button
-            variant={isRecordingActive ? 'danger' : 'success'}
+            variant={isRecording ? 'danger' : 'success'}
             size="lg"
-            onClick={isRecordingActive ? handleStopBroadcast : handleStartBroadcast}
+            onClick={isRecording ? handleStopBroadcast : handleStartBroadcast}
             isLoading={isStarting || sonioxLoading}
             className="flex-1"
           >
-            {isRecordingActive ? 'Detener Transmision' : 'Iniciar Transmision'}
+            {isRecording ? 'Detener Transmision' : 'Iniciar Transmision'}
           </Button>
           <Button variant="secondary" size="lg" onClick={loadAudioDevices} className="flex-1">
             Actualizar
@@ -121,7 +130,7 @@ export const MicrophoneSetup: React.FC = () => {
         onRefresh={loadAudioDevices}
       />
 
-      <AudioLevelMonitor audioLevel={audioLevel} isRecording={isRecordingActive} />
+      <AudioLevelMonitor audioLevel={audioLevel} isRecording={isRecording} />
     </div>
   );
 };
