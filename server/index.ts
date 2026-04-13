@@ -10,23 +10,27 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Parse CORS origins into an array
+const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:3001')
+  .split(',')
+  .map((o) => o.trim());
+
 // Middleware
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || ['http://localhost:3000', 'http://localhost:3001'],
+  origin: corsOrigins,
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type'],
 }));
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json());
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
+    sonioxConfigured: !!process.env.SONIOX_API_KEY,
   });
 });
 
@@ -34,7 +38,7 @@ app.get('/health', (req, res) => {
 app.use('/api/soniox', sonioxRoutes);
 
 // 404 handler
-app.use((req, res) => {
+app.use((req: express.Request, res: express.Response) => {
   res.status(404).json({
     success: false,
     error: `Route not found: ${req.method} ${req.path}`,
@@ -46,25 +50,15 @@ app.use(errorHandler);
 
 // Start server
 app.listen(PORT, () => {
+  const hasKey = !!process.env.SONIOX_API_KEY;
   console.log(`
-╔═══════════════════════════════════════╗
-║   Iglesia Adventista UNADECA         ║
-║   Live Translation Backend Server      ║
-╚═══════════════════════════════════════╝
+  Iglesia Adventista UNADECA - Backend Server
 
-🚀 Server running on http://localhost:${PORT}
-📡 Soniox API: ${process.env.SONIOX_API_URL || 'https://api.soniox.com'}
-🌍 CORS enabled for: ${process.env.CORS_ORIGIN || 'http://localhost:3000, http://localhost:3001'}
+  Server:  http://localhost:${PORT}
+  CORS:    ${corsOrigins.join(', ')}
+  Soniox:  ${hasKey ? 'API key configured' : 'WARNING: SONIOX_API_KEY missing!'}
   `);
 });
 
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  console.log('SIGINT signal received: closing HTTP server');
-  process.exit(0);
-});
+process.on('SIGTERM', () => process.exit(0));
+process.on('SIGINT', () => process.exit(0));

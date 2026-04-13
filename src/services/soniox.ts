@@ -1,238 +1,210 @@
-import type { SonioxSessionConfig, SonioxTranscriptionResult } from '../types/index.js';
-import { languageConfig } from './config.js';
 import axios from 'axios';
 
-// Backend API URL - points to the Express server
 const BACKEND_API_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000/api';
+const SONIOX_WS_URL = 'wss://stt-rt.soniox.com/transcribe-websocket';
+
+/**
+ * A single Soniox token as returned by the WebSocket API.
+ * Docs: https://soniox.com/docs/stt/api-reference/websocket-api#response
+ */
+export interface SonioxToken {
+  text: string;
+  start_ms?: number;
+  end_ms?: number;
+  confidence: number;
+  is_final: boolean;
+  speaker?: string;
+  language?: string;
+  source_language?: string;
+  translation_status?: 'none' | 'original' | 'translation';
+}
+
+export interface SonioxResponse {
+  tokens: SonioxToken[];
+  final_audio_proc_ms: number;
+  total_audio_proc_ms: number;
+  finished?: boolean;
+  error_code?: number;
+  error_message?: string;
+}
+
+export interface SonioxCallbacks {
+  onTokens: (tokens: SonioxToken[], isFinal: boolean) => void;
+  onError: (error: Error) => void;
+  onFinished: () => void;
+}
 
 export class SonioxService {
-  private sessionId: string | null = null;
   private websocket: WebSocket | null = null;
-  private transcriptionCallback: ((result: SonioxTranscriptionResult) => void) | null = null;
-  private errorCallback: ((error: Error) => void) | null = null;
-  private wsUrl: string | null = null;
+  private callbacks: SonioxCallbacks | null = null;
+  private temporaryApiKey: string | null = null;
 
   /**
-   * Create a new Soniox session for transcription
+   * Step 1: Get a temporary API key from our backend
+   * (backend calls Soniox REST API so the real key stays server-side)
    */
-  async createSession(config?: Partial<SonioxSessionConfig>): Promise<string> {
-    try {
-      const sessionConfig = {
-        languageCode: config?.languageCode || languageConfig.sourceLanguage,
-        audioModel: config?.audioModel || 'default',
-        enableTranslation: config?.enableTranslation !== false,
-        translationLanguageCode: config?.translationLanguageCode || languageConfig.targetLanguage,
-      };
+  async fetchTemporaryKey(): Promise<string> {
+    const response = await axios.post(`${BACKEND_API_URL}/soniox/temporary-key`);
+    const data = response.data;
 
-      // Call backend API instead of Soniox directly
-      const response = await axios.post<any>(
-        `${BACKEND_API_URL}/soniox/sessions`,
-        sessionConfig
-      );
-
-      const sessionId = response.data.data?.sessionId as string | undefined;
-      if (!sessionId) {
-        throw new Error('Failed to create session: No session ID returned');
-      }
-
-      this.sessionId = sessionId;
-      this.wsUrl = response.data.data?.wsUrl || null;
-      console.log('✅ Soniox session created:', this.sessionId);
-      return this.sessionId;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error('❌ Failed to create Soniox session:', errorMessage);
-      throw new Error(`Failed to create Soniox session: ${errorMessage}`);
+    if (!data.success || !data.data?.apiKey) {
+      throw new Error(data.error || 'Failed to get temporary API key');
     }
+
+    this.temporaryApiKey = data.data.apiKey as string;
+    console.log('Temporary API key obtained, expires:', data.data.expiresAt);
+    return this.temporaryApiKey!;
   }
 
   /**
-   * Connect to WebSocket for real-time transcription
+   * Step 2: Open a WebSocket to Soniox and send config as the first message.
+   *
+   * The Soniox WebSocket protocol:
+   *  1. Connect to wss://stt-rt.soniox.com/transcribe-websocket
+   *  2. Send JSON config (with api_key, model, translation, etc.)
+   *  3. Send raw audio as binary frames
+   *  4. Receive JSON responses with tokens
+   *  5. Send empty string to signal end-of-audio
    */
-  async connectWebSocket(sessionId: string): Promise<void> {
-    try {
-      return new Promise((resolve, reject) => {
-        // Get WebSocket URL from backend if we don't have it
-        if (!this.wsUrl) {
-          this.wsUrl = this.getWebSocketUrl(sessionId);
-        }
+  async connect(
+    callbacks: SonioxCallbacks,
+    options?: {
+      sourceLanguage?: string;
+      targetLanguage?: string;
+    }
+  ): Promise<void> {
+    this.callbacks = callbacks;
 
+    if (!this.temporaryApiKey) {
+      await this.fetchTemporaryKey();
+    }
+
+    return new Promise((resolve, reject) => {
+      this.websocket = new WebSocket(SONIOX_WS_URL);
+
+      this.websocket.onopen = () => {
+        console.log('WebSocket connected, sending config...');
+
+        // Send the config as the first message per Soniox protocol
+        const config = this.buildConfig(
+          options?.sourceLanguage || 'es',
+          options?.targetLanguage || 'en',
+        );
+        this.websocket!.send(JSON.stringify(config));
+        console.log('Config sent. Ready to stream audio.');
+        resolve();
+      };
+
+      this.websocket.onmessage = (event) => {
         try {
-          console.log('🔌 Connecting to WebSocket:', this.wsUrl);
-          this.websocket = new WebSocket(this.wsUrl);
+          const response: SonioxResponse = JSON.parse(event.data as string);
 
-          this.websocket.onopen = () => {
-            console.log('✅ Connected to Soniox WebSocket');
-            resolve();
-          };
+          // Handle errors from Soniox
+          if (response.error_code) {
+            const error = new Error(
+              `Soniox error ${response.error_code}: ${response.error_message}`
+            );
+            this.callbacks?.onError(error);
+            return;
+          }
 
-          this.websocket.onmessage = (event) => {
-            try {
-              const data = JSON.parse(event.data);
-              this.handleTranscriptionMessage(data);
-            } catch (parseError) {
-              console.error('Failed to parse WebSocket message:', parseError);
-            }
-          };
+          // Process tokens
+          if (response.tokens && response.tokens.length > 0) {
+            const hasFinal = response.tokens.some((t) => t.is_final);
+            this.callbacks?.onTokens(response.tokens, hasFinal);
+          }
 
-          this.websocket.onerror = (event) => {
-            const error = new Error(`WebSocket error: ${event}`);
-            console.error('❌ WebSocket error:', error);
-            if (this.errorCallback) {
-              this.errorCallback(error);
-            }
-            reject(error);
-          };
-
-          this.websocket.onclose = () => {
-            console.log('🔌 Disconnected from Soniox WebSocket');
-          };
-        } catch (wsError) {
-          const errorMessage = wsError instanceof Error ? wsError.message : 'Unknown error';
-          console.error('❌ Failed to create WebSocket:', errorMessage);
-          reject(new Error(`Failed to create WebSocket: ${errorMessage}`));
+          // Session finished
+          if (response.finished) {
+            this.callbacks?.onFinished();
+          }
+        } catch (parseError) {
+          console.error('Failed to parse Soniox message:', parseError);
         }
-      });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error('❌ Failed to connect to Soniox:', errorMessage);
-      throw new Error(`Failed to connect to Soniox: ${errorMessage}`);
-    }
-  }
-
-  /**
-   * Send audio data to Soniox for transcription
-   */
-  sendAudioData(audioData: Float32Array): void {
-    try {
-      if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
-        console.warn('⚠️  WebSocket is not open');
-        return;
-      }
-
-      // Convert Float32Array to base64 for transmission
-      const int16Array = this.float32ToInt16(audioData);
-      const base64Audio = this.arrayBufferToBase64(int16Array.buffer);
-
-      const message = {
-        type: 'audio_data',
-        audio: base64Audio,
-        timestamp: Date.now(),
       };
 
-      this.websocket.send(JSON.stringify(message));
-    } catch (error) {
-      console.error('Failed to send audio data:', error);
-    }
+      this.websocket.onerror = () => {
+        const error = new Error('WebSocket connection error');
+        this.callbacks?.onError(error);
+        reject(error);
+      };
+
+      this.websocket.onclose = (event) => {
+        console.log(`WebSocket closed: code=${event.code} reason=${event.reason}`);
+      };
+    });
   }
 
   /**
-   * Register callback for transcription results
+   * Send raw PCM audio data as a binary frame.
+   * The audio must be Int16 PCM, 16 kHz, mono.
    */
-  onTranscription(callback: (result: SonioxTranscriptionResult) => void): void {
-    this.transcriptionCallback = callback;
-  }
-
-  /**
-   * Register callback for errors
-   */
-  onError(callback: (error: Error) => void): void {
-    this.errorCallback = callback;
-  }
-
-  /**
-   * End the transcription session
-   */
-  async endSession(): Promise<void> {
-    try {
-      if (this.websocket) {
-        this.websocket.close();
-        this.websocket = null;
-      }
-
-      if (this.sessionId) {
-        await axios.post(`${BACKEND_API_URL}/soniox/sessions/${this.sessionId}/end`);
-      }
-
-      this.sessionId = null;
-      this.wsUrl = null;
-      console.log('✅ Soniox session ended');
-    } catch (error) {
-      console.error('Failed to end session:', error);
-    }
-  }
-
-  /**
-   * Get current session ID
-   */
-  getSessionId(): string | null {
-    return this.sessionId;
-  }
-
-  /**
-   * Handle incoming transcription messages from WebSocket
-   */
-  private handleTranscriptionMessage(data: any): void {
-    if (!this.transcriptionCallback) {
+  sendAudio(pcmInt16Data: Int16Array): void {
+    if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
       return;
     }
-
-    try {
-      const result: SonioxTranscriptionResult = {
-        text: data.text || '',
-        isFinal: data.isFinal || false,
-        confidence: data.confidence,
-        startTime: data.startTime,
-        endTime: data.endTime,
-        translations: data.translations,
-      };
-
-      this.transcriptionCallback(result);
-    } catch (error) {
-      console.error('Error processing transcription message:', error);
-    }
+    // Send the raw bytes directly as a binary frame
+    this.websocket.send(pcmInt16Data.buffer as ArrayBuffer);
   }
 
   /**
-   * Get WebSocket URL for the session
-   * This is constructed on the backend, but we need to build it here for fallback
+   * Signal end-of-audio and close.
+   * Per Soniox docs: send an empty string to finish the stream.
    */
-  private getWebSocketUrl(sessionId: string): string {
-    // The actual WebSocket URL is returned by the backend
-    // This is just a fallback construction
-    const backendUrl = BACKEND_API_URL.replace('/api', '');
-    const protocol = backendUrl.startsWith('https') ? 'wss' : 'ws';
-    const baseUrl = backendUrl.replace(/^https?:\/\//, '');
-    
-    // Note: The actual WebSocket connection should use the URL from backend's createSession response
-    // which contains the real Soniox WebSocket URL
-    return `${protocol}://${baseUrl}/soniox/stream/${sessionId}`;
+  finish(): void {
+    if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    this.websocket.send('');
   }
 
   /**
-   * Convert Float32Array to Int16Array for audio transmission
+   * Hard disconnect without finishing.
    */
-  private float32ToInt16(float32Array: Float32Array): Int16Array {
-    const int16Array = new Int16Array(float32Array.length);
-    for (let i = 0; i < float32Array.length; i++) {
-      const s = Math.max(-1, Math.min(1, float32Array[i]));
-      int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  disconnect(): void {
+    if (this.websocket) {
+      this.websocket.close();
+      this.websocket = null;
     }
-    return int16Array;
+    this.callbacks = null;
+    this.temporaryApiKey = null;
   }
 
   /**
-   * Convert ArrayBuffer to base64 string
+   * Check if the WebSocket is currently open.
    */
-  private arrayBufferToBase64(buffer: ArrayBufferLike): string {
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
+  isConnected(): boolean {
+    return !!this.websocket && this.websocket.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * Build the Soniox config object sent as the first WebSocket message.
+   * Docs: https://soniox.com/docs/stt/api-reference/websocket-api#configuration
+   */
+  private buildConfig(sourceLanguage: string, targetLanguage: string) {
+    return {
+      api_key: this.temporaryApiKey,
+      model: 'stt-rt-preview',
+      audio_format: 'pcm_s16le',
+      sample_rate: 16000,
+      num_channels: 1,
+      language_hints: [sourceLanguage, targetLanguage],
+      enable_language_identification: true,
+      enable_endpoint_detection: true,
+      context: {
+        general: [
+          { key: 'domain', value: 'Religion' },
+          { key: 'topic', value: 'Church service' },
+          { key: 'organization', value: 'Iglesia Adventista UNADECA' },
+        ],
+      },
+      translation: {
+        type: 'one_way',
+        target_language: targetLanguage,
+      },
+    };
   }
 }
 
-// Export singleton instance
+// Singleton
 export const sonioxService = new SonioxService();

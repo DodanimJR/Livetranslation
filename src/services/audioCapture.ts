@@ -1,144 +1,129 @@
-import type { AudioDevice, AudioLevelData } from '../types/index.js';
-import { audioConfig } from './config.js';
+import type { AudioDevice, AudioLevelData } from '../types/index';
+
+const TARGET_SAMPLE_RATE = 16000;
 
 export class AudioCaptureService {
   private mediaStream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
-  private processor: ScriptProcessorNode | null = null;
-  private dataArray: Uint8Array<ArrayBuffer> | null = null;
   private isInitialized = false;
-  private audioCallback: ((data: Float32Array) => void) | null = null;
+  private audioCallback: ((pcm: Int16Array) => void) | null = null;
   private levelCallback: ((level: AudioLevelData) => void) | null = null;
+  private levelInterval: ReturnType<typeof setInterval> | null = null;
 
   /**
-   * Initialize Web Audio API and get media stream from selected device
-   */
-  async initialize(deviceId?: string): Promise<void> {
-    try {
-      if (this.isInitialized) {
-        console.warn('Audio capture already initialized');
-        return;
-      }
-
-      // Request microphone access
-      const constraints: MediaStreamConstraints = {
-        audio: {
-          deviceId: deviceId ? { exact: deviceId } : undefined,
-          echoCancellation: audioConfig.echoCancellation,
-          noiseSuppression: audioConfig.noiseSuppression,
-          autoGainControl: audioConfig.autoGainControl,
-        },
-      };
-
-      this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-
-      // Create audio context
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      
-      // Create analyser for level monitoring
-      this.analyser = this.audioContext.createAnalyser();
-      this.analyser.fftSize = 2048;
-
-      // Create script processor for audio data
-      this.processor = this.audioContext.createScriptProcessor(
-        audioConfig.bufferSize,
-        audioConfig.channelCount,
-        audioConfig.channelCount
-      );
-
-      // Connect nodes
-      const source = this.audioContext.createMediaStreamSource(this.mediaStream);
-      source.connect(this.analyser);
-      source.connect(this.processor);
-      this.processor.connect(this.audioContext.destination);
-
-      // Initialize data array for level monitoring
-      const buffer = new ArrayBuffer(this.analyser.frequencyBinCount);
-      this.dataArray = new Uint8Array(buffer);
-
-      // Set up audio processing callback
-      this.processor.onaudioprocess = (event) => {
-        const inputData = event.inputBuffer.getChannelData(0);
-        const audioData = new Float32Array(inputData);
-        
-        if (this.audioCallback) {
-          this.audioCallback(audioData);
-        }
-
-        // Update audio levels
-        this.updateAudioLevel();
-      };
-
-      this.isInitialized = true;
-      console.log('Audio capture initialized successfully');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to initialize audio capture: ${errorMessage}`);
-    }
-  }
-
-  /**
-   * Get all available audio input devices
+   * Get all available audio input devices.
+   * Must be called after getUserMedia for labels to be populated.
    */
   async getAudioDevices(): Promise<AudioDevice[]> {
+    // Need at least one getUserMedia call for labels to appear
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const audioInputs = devices.filter((device) => device.kind === 'audioinput');
+      const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      tempStream.getTracks().forEach((t) => t.stop());
+    } catch {
+      // ignore - permissions may not be granted yet
+    }
 
-      return audioInputs.map((device) => ({
-        deviceId: device.deviceId,
-        label: device.label || `Microphone ${audioInputs.indexOf(device) + 1}`,
-        kind: 'audioinput',
-        groupId: device.groupId,
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices
+      .filter((d) => d.kind === 'audioinput')
+      .map((d, i) => ({
+        deviceId: d.deviceId,
+        label: d.label || `Microphone ${i + 1}`,
+        kind: 'audioinput' as const,
+        groupId: d.groupId,
       }));
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to enumerate audio devices: ${errorMessage}`);
-    }
   }
 
   /**
-   * Change the active audio device
+   * Initialize: get mic stream + set up AudioContext.
+   * Requesting 16 kHz sample rate so audio matches what Soniox expects.
    */
-  async switchAudioDevice(deviceId: string): Promise<void> {
-    try {
-      // Stop current stream
-      this.stop();
+  async initialize(deviceId?: string): Promise<void> {
+    if (this.isInitialized) return;
 
-      // Re-initialize with new device
-      await this.initialize(deviceId);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to switch audio device: ${errorMessage}`);
-    }
+    this.mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+
+    this.audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+
+    const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+
+    // Analyser for level monitoring
+    this.analyser = this.audioContext.createAnalyser();
+    this.analyser.fftSize = 512;
+    source.connect(this.analyser);
+
+    // ScriptProcessor to get raw PCM chunks
+    const processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+    source.connect(processor);
+    processor.connect(this.audioContext.destination); // required for onaudioprocess to fire
+
+    processor.onaudioprocess = (e) => {
+      if (!this.audioCallback) return;
+      const float32 = e.inputBuffer.getChannelData(0);
+      const int16 = this.float32ToInt16(float32);
+      this.audioCallback(int16);
+    };
+
+    this.isInitialized = true;
   }
 
   /**
-   * Start capturing audio
+   * Start sending audio to the callback.
+   * Also starts the level monitor.
    */
-  start(audioCallback: (data: Float32Array) => void): void {
-    if (!this.isInitialized) {
-      throw new Error('Audio capture not initialized. Call initialize() first.');
-    }
+  start(callback: (pcm: Int16Array) => void): void {
+    if (!this.isInitialized) throw new Error('Call initialize() first');
+    this.audioCallback = callback;
 
-    this.audioCallback = audioCallback;
-
-    if (this.audioContext && this.audioContext.state === 'suspended') {
+    if (this.audioContext?.state === 'suspended') {
       this.audioContext.resume();
     }
 
-    console.log('Audio capture started');
+    // Start periodic level updates
+    if (this.analyser && this.levelCallback) {
+      const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+      this.levelInterval = setInterval(() => {
+        if (!this.analyser) return;
+        this.analyser.getByteFrequencyData(dataArray);
+
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          const n = dataArray[i] / 255;
+          sum += n * n;
+        }
+        const rms = Math.sqrt(sum / dataArray.length) * 100;
+
+        this.levelCallback!({
+          current: Math.round(rms),
+          peak: 100,
+          rms,
+          timestamp: Date.now(),
+        });
+      }, 100);
+    }
   }
 
   /**
-   * Stop capturing audio
+   * Stop capturing and release resources.
    */
   stop(): void {
     this.audioCallback = null;
 
+    if (this.levelInterval) {
+      clearInterval(this.levelInterval);
+      this.levelInterval = null;
+    }
+
     if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach((track) => track.stop());
+      this.mediaStream.getTracks().forEach((t) => t.stop());
       this.mediaStream = null;
     }
 
@@ -148,67 +133,39 @@ export class AudioCaptureService {
     }
 
     this.analyser = null;
-    this.processor = null;
-    this.dataArray = null;
     this.isInitialized = false;
-
-    console.log('Audio capture stopped');
   }
 
   /**
-   * Register callback for audio level updates
+   * Register a callback that receives audio level updates (~10 Hz).
    */
   onLevelUpdate(callback: (level: AudioLevelData) => void): void {
     this.levelCallback = callback;
   }
 
   /**
-   * Update and emit audio level data
+   * Switch to a different mic. Tears down & re-inits.
    */
-  private updateAudioLevel(): void {
-    if (!this.analyser || !this.dataArray || !this.levelCallback) {
-      return;
-    }
-
-    try {
-      this.analyser.getByteFrequencyData(this.dataArray);
-
-      // Calculate RMS (Root Mean Square) for more accurate level
-      let sum = 0;
-      for (let i = 0; i < this.dataArray.length; i++) {
-        const normalized = this.dataArray[i] / 255;
-        sum += normalized * normalized;
-      }
-      const rms = Math.sqrt(sum / this.dataArray.length);
-
-      // Normalize to 0-100 range
-      const levelValue = Math.round(rms * 100);
-      
-      this.levelCallback({
-        current: levelValue,
-        peak: 100, // Could track peak separately if needed
-        rms: rms * 100,
-        timestamp: Date.now(),
-      });
-    } catch (error) {
-      console.error('Error updating audio level:', error);
-    }
+  async switchAudioDevice(deviceId: string): Promise<void> {
+    this.stop();
+    await this.initialize(deviceId);
   }
 
-  /**
-   * Check if audio capture is active
-   */
   isActive(): boolean {
     return this.isInitialized && this.audioCallback !== null;
   }
 
   /**
-   * Get current audio context sample rate
+   * Convert Float32 [-1, 1] to Int16 PCM.
    */
-  getSampleRate(): number {
-    return this.audioContext?.sampleRate || audioConfig.sampleRate;
+  private float32ToInt16(f32: Float32Array): Int16Array {
+    const i16 = new Int16Array(f32.length);
+    for (let i = 0; i < f32.length; i++) {
+      const s = Math.max(-1, Math.min(1, f32[i]));
+      i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return i16;
   }
 }
 
-// Export singleton instance
 export const audioCaptureService = new AudioCaptureService();

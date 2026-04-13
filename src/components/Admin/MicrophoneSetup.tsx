@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Card } from '../Common/Card';
 import { Button } from '../Common/Button';
 import { Alert } from '../Common/Alert';
@@ -25,36 +25,30 @@ export const MicrophoneSetup: React.FC = () => {
   } = useAudioCapture();
 
   const {
-    sessionId,
     isConnected,
     isLoading: sonioxLoading,
     error: sonioxError,
-    createSession,
-    connectSession,
-    sendAudioData,
-    endSession,
+    connect: connectSoniox,
+    sendAudio,
+    finish: finishSoniox,
+    disconnect: disconnectSoniox,
   } = useSonioxSession();
-
-  // Initialize audio on mount
-  useEffect(() => {
-    initializeAudio(selectedDevice?.deviceId);
-  }, []);
 
   const handleStartBroadcast = async () => {
     try {
       setIsStarting(true);
 
-      // Create Soniox session
-      const newSessionId = await createSession();
+      // 1. Init mic if not already done
+      if (!isInitialized) {
+        await initializeAudio(selectedDevice?.deviceId);
+      }
 
-      // Connect to Soniox
-      await connectSession(newSessionId);
+      // 2. Get temp key + open WebSocket to Soniox
+      await connectSoniox('es', 'en');
 
-      // Start audio capture with Soniox callback
-      startCapture((audioData) => {
-        if (isConnected) {
-          sendAudioData(audioData);
-        }
+      // 3. Start streaming mic audio into the WebSocket
+      startCapture((pcmInt16: Int16Array) => {
+        sendAudio(pcmInt16);
       });
 
       setIsRecordingActive(true);
@@ -67,8 +61,15 @@ export const MicrophoneSetup: React.FC = () => {
 
   const handleStopBroadcast = async () => {
     try {
+      // Stop mic
       stopCapture();
-      await endSession();
+
+      // Signal end-of-audio so Soniox can finalize remaining tokens
+      finishSoniox();
+
+      // After a short delay, hard disconnect
+      setTimeout(() => disconnectSoniox(), 2000);
+
       setIsRecordingActive(false);
     } catch (error) {
       console.error('Failed to stop broadcast:', error);
@@ -78,14 +79,6 @@ export const MicrophoneSetup: React.FC = () => {
   const handleDeviceSwitch = async (device: any) => {
     try {
       await switchDevice(device);
-      if (isRecordingActive) {
-        // Restart recording with new device
-        stopCapture();
-        await initializeAudio(device.deviceId);
-        startCapture((audioData) => {
-          sendAudioData(audioData);
-        });
-      }
     } catch (error) {
       console.error('Failed to switch device:', error);
     }
@@ -98,47 +91,19 @@ export const MicrophoneSetup: React.FC = () => {
       {/* Status Panel */}
       <Card padding="lg">
         <div className="space-y-3">
-          <h3 className="text-lg font-semibold text-gray-900">Estado de la Transmisión</h3>
-          
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            <div className={`p-4 rounded-lg text-center ${isInitialized ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-200'}`}>
-              <p className="text-xs text-gray-600 mb-1">Audio</p>
-              <p className={`text-lg font-bold ${isInitialized ? 'text-green-600' : 'text-gray-600'}`}>
-                {isInitialized ? '✓' : '○'}
-              </p>
-            </div>
+          <h3 className="text-lg font-semibold text-gray-900">Estado de la Transmision</h3>
 
-            <div className={`p-4 rounded-lg text-center ${isConnected ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-200'}`}>
-              <p className="text-xs text-gray-600 mb-1">Soniox</p>
-              <p className={`text-lg font-bold ${isConnected ? 'text-green-600' : 'text-gray-600'}`}>
-                {isConnected ? '✓' : '○'}
-              </p>
-            </div>
-
-            <div className={`p-4 rounded-lg text-center ${isRecordingActive ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-200'}`}>
-              <p className="text-xs text-gray-600 mb-1">Grabando</p>
-              <p className={`text-lg font-bold ${isRecordingActive ? 'text-green-600' : 'text-gray-600'}`}>
-                {isRecordingActive ? '✓' : '○'}
-              </p>
-            </div>
-
-            <div className={`p-4 rounded-lg text-center ${sessionId ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-gray-200'}`}>
-              <p className="text-xs text-gray-600 mb-1">Sesión</p>
-              <p className={`text-xs font-mono ${sessionId ? 'text-blue-600' : 'text-gray-600'}`}>
-                {sessionId ? sessionId.slice(0, 8) : 'N/A'}
-              </p>
-            </div>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+            <StatusIndicator label="Audio" active={isInitialized} />
+            <StatusIndicator label="Soniox" active={isConnected} />
+            <StatusIndicator label="Grabando" active={isRecordingActive} />
           </div>
         </div>
       </Card>
 
       {/* Error Alert */}
       {errorMessage && (
-        <Alert
-          type="error"
-          message={errorMessage}
-          onClose={() => window.location.reload()}
-        />
+        <Alert type="error" message={errorMessage} />
       )}
 
       {/* Control Buttons */}
@@ -151,16 +116,11 @@ export const MicrophoneSetup: React.FC = () => {
             isLoading={isStarting || sonioxLoading}
             className="flex-1"
           >
-            {isRecordingActive ? '⏹ Detener Transmisión' : '🎙 Iniciar Transmisión'}
+            {isRecordingActive ? 'Detener Transmision' : 'Iniciar Transmision'}
           </Button>
 
-          <Button
-            variant="secondary"
-            size="lg"
-            onClick={loadAudioDevices}
-            className="flex-1"
-          >
-            🔄 Actualizar
+          <Button variant="secondary" size="lg" onClick={loadAudioDevices} className="flex-1">
+            Actualizar
           </Button>
         </div>
       </Card>
@@ -171,7 +131,6 @@ export const MicrophoneSetup: React.FC = () => {
         selectedDevice={selectedDevice}
         onDeviceSelect={handleDeviceSwitch}
         onRefresh={loadAudioDevices}
-        isLoading={false}
       />
 
       {/* Audio Level Monitor */}
@@ -179,3 +138,15 @@ export const MicrophoneSetup: React.FC = () => {
     </div>
   );
 };
+
+/* Small helper component */
+function StatusIndicator({ label, active }: { label: string; active: boolean }) {
+  return (
+    <div className={`p-4 rounded-lg text-center ${active ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-200'}`}>
+      <p className="text-xs text-gray-600 mb-1">{label}</p>
+      <p className={`text-lg font-bold ${active ? 'text-green-600' : 'text-gray-400'}`}>
+        {active ? '✓' : '○'}
+      </p>
+    </div>
+  );
+}

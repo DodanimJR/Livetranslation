@@ -1,101 +1,37 @@
 import { Router, Request, Response } from 'express';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import {
-  createSonioxSession,
-  getSonioxSession,
-  endSonioxSession,
-  getSonioxWebSocketUrl,
-} from '../services/sonioxService.js';
+import { createTemporaryApiKey } from '../services/sonioxService.js';
 
 const router = Router();
 
 /**
- * POST /api/soniox/sessions
- * Create a new Soniox transcription session
+ * POST /api/soniox/temporary-key
+ *
+ * Creates a short-lived Soniox API key so the browser can open
+ * a WebSocket to wss://stt-rt.soniox.com/transcribe-websocket
+ * without exposing the real API key.
  */
 router.post(
-  '/sessions',
-  asyncHandler(async (req: Request, res: Response) => {
-    const { audioModel, languageCode, enableTranslation, translationLanguageCode } = req.body;
+  '/temporary-key',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const apiKey = process.env.SONIOX_API_KEY;
 
-    if (!languageCode) {
-      return res.status(400).json({
+    if (!apiKey) {
+      return res.status(500).json({
         success: false,
-        error: 'languageCode is required',
+        error: 'SONIOX_API_KEY is not configured on the server.',
       });
     }
 
-    const session = await createSonioxSession({
-      audioModel,
-      languageCode,
-      enableTranslation,
-      translationLanguageCode,
-    });
+    const result = await createTemporaryApiKey(apiKey);
 
-    // Also return the WebSocket URL for easy client access
-    const wsUrl = getSonioxWebSocketUrl(session.sessionId);
-
-    res.status(201).json({
+    res.json({
       success: true,
       data: {
-        ...session,
-        wsUrl,
+        apiKey: result.api_key,
+        expiresAt: result.expires_at,
+        wsUrl: 'wss://stt-rt.soniox.com/transcribe-websocket',
       },
-    });
-  })
-);
-
-/**
- * GET /api/soniox/sessions/:sessionId
- * Get session details
- */
-router.get(
-  '/sessions/:sessionId',
-  asyncHandler(async (req: Request, res: Response) => {
-    const sessionId = Array.isArray(req.params.sessionId) ? req.params.sessionId[0] : req.params.sessionId;
-
-    const session = await getSonioxSession(sessionId);
-
-    res.json({
-      success: true,
-      data: session,
-    });
-  })
-);
-
-/**
- * POST /api/soniox/sessions/:sessionId/end
- * End a transcription session
- */
-router.post(
-  '/sessions/:sessionId/end',
-  asyncHandler(async (req: Request, res: Response) => {
-    const sessionId = Array.isArray(req.params.sessionId) ? req.params.sessionId[0] : req.params.sessionId;
-
-    const result = await endSonioxSession(sessionId);
-
-    res.json({
-      success: true,
-      data: result,
-      message: 'Session ended successfully',
-    });
-  })
-);
-
-/**
- * GET /api/soniox/sessions/:sessionId/ws-url
- * Get WebSocket URL for a session
- */
-router.get(
-  '/sessions/:sessionId/ws-url',
-  asyncHandler(async (req: Request, res: Response) => {
-    const sessionId = Array.isArray(req.params.sessionId) ? req.params.sessionId[0] : req.params.sessionId;
-
-    const wsUrl = getSonioxWebSocketUrl(sessionId);
-
-    res.json({
-      success: true,
-      data: { wsUrl },
     });
   })
 );

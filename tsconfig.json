@@ -21,16 +21,7 @@
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "noEmit": true,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"],
-      "@components/*": ["src/components/*"],
-      "@services/*": ["src/services/*"],
-      "@hooks/*": ["src/hooks/*"],
-      "@types/*": ["src/types/*"],
-      "@utils/*": ["src/utils/*"]
-    }
+    "noEmit": true
   },
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]

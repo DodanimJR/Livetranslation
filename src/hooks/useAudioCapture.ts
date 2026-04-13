@@ -42,8 +42,8 @@ export const useAudioCapture = () => {
     }
   }, []);
 
-  // Start capturing audio
-  const startCapture = useCallback((audioCallback: (data: Float32Array) => void) => {
+  // Start capturing audio (callback receives Int16 PCM)
+  const startCapture = useCallback((audioCallback: (data: Int16Array) => void) => {
     try {
       if (!isInitialized) {
         throw new Error('Audio capture not initialized');

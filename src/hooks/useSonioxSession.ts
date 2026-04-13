@@ -1,111 +1,113 @@
-import { useCallback, useState } from 'react';
-import { sonioxService } from '../services/soniox';
-import type { SonioxTranscriptionResult } from '../types/index';
+import { useCallback, useRef, useState } from 'react';
+import { sonioxService, SonioxToken } from '../services/soniox';
+
+export interface TranscriptEntry {
+  id: string;
+  text: string;
+  language: string;
+  type: 'transcription' | 'translation';
+  sourceLanguage?: string;
+  speaker?: string;
+  timestamp: number;
+  isFinal: boolean;
+}
 
 export const useSonioxSession = () => {
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [transcriptionResults, setTranscriptionResults] = useState<SonioxTranscriptionResult[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [entries, setEntries] = useState<TranscriptEntry[]>([]);
 
-  // Create a new session
-  const createSession = useCallback(async () => {
-    try {
-      setError(null);
-      setIsLoading(true);
+  // Accumulate non-final text so we can show "live" partial results
+  const nonFinalRef = useRef<string>('');
 
-      const newSessionId = await sonioxService.createSession({
-        languageCode: 'es',
-        enableTranslation: true,
-        translationLanguageCode: 'en',
-      });
+  const handleTokens = useCallback((tokens: SonioxToken[], _isFinal: boolean) => {
+    for (const token of tokens) {
+      if (!token.text) continue;
 
-      setSessionId(newSessionId);
-      return newSessionId;
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(errorMessage);
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+      const isTranslation = token.translation_status === 'translation';
+      const type = isTranslation ? 'translation' : 'transcription';
 
-  // Connect to WebSocket
-  const connectSession = useCallback(async (id: string) => {
-    try {
-      setError(null);
-      setIsLoading(true);
-
-      await sonioxService.connectWebSocket(id);
-      setIsConnected(true);
-
-      // Set up transcription callback
-      sonioxService.onTranscription((result) => {
-        setTranscriptionResults((prev) => [...prev, result]);
-      });
-
-      // Set up error callback
-      sonioxService.onError((err) => {
-        setError(err.message);
-      });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(errorMessage);
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  // Send audio data to transcription
-  const sendAudioData = useCallback((audioData: Float32Array) => {
-    try {
-      if (!isConnected) {
-        console.warn('Session not connected');
-        return;
+      if (token.is_final) {
+        // Final token: commit to the transcript list
+        setEntries((prev) => [
+          ...prev,
+          {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            text: token.text,
+            language: token.language || 'unknown',
+            type,
+            sourceLanguage: token.source_language,
+            speaker: token.speaker,
+            timestamp: Date.now(),
+            isFinal: true,
+          },
+        ]);
+      } else {
+        // Non-final: accumulate for live preview
+        nonFinalRef.current += token.text;
       }
-      sonioxService.sendAudioData(audioData);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(errorMessage);
     }
-  }, [isConnected]);
+  }, []);
 
-  // End the session
-  const endSession = useCallback(async () => {
+  // Connect to Soniox WebSocket (via temporary key from backend)
+  const connect = useCallback(async (sourceLanguage?: string, targetLanguage?: string) => {
     try {
       setError(null);
       setIsLoading(true);
 
-      await sonioxService.endSession();
-      setSessionId(null);
-      setIsConnected(false);
-      setTranscriptionResults([]);
+      await sonioxService.connect(
+        {
+          onTokens: handleTokens,
+          onError: (err) => setError(err.message),
+          onFinished: () => {
+            console.log('Soniox session finished');
+            setIsConnected(false);
+          },
+        },
+        { sourceLanguage, targetLanguage }
+      );
+
+      setIsConnected(true);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(errorMessage);
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      setError(msg);
+      throw err;
     } finally {
       setIsLoading(false);
     }
+  }, [handleTokens]);
+
+  // Send raw PCM audio
+  const sendAudio = useCallback((pcmInt16: Int16Array) => {
+    sonioxService.sendAudio(pcmInt16);
   }, []);
 
-  // Clear transcription results
-  const clearResults = useCallback(() => {
-    setTranscriptionResults([]);
+  // Graceful finish (sends empty frame, waits for remaining tokens)
+  const finish = useCallback(() => {
+    sonioxService.finish();
+  }, []);
+
+  // Hard disconnect
+  const disconnect = useCallback(() => {
+    sonioxService.disconnect();
+    setIsConnected(false);
+  }, []);
+
+  const clearEntries = useCallback(() => {
+    setEntries([]);
+    nonFinalRef.current = '';
   }, []);
 
   return {
-    sessionId,
     isConnected,
     isLoading,
-    transcriptionResults,
     error,
-    createSession,
-    connectSession,
-    sendAudioData,
-    endSession,
-    clearResults,
+    entries,
+    connect,
+    sendAudio,
+    finish,
+    disconnect,
+    clearEntries,
   };
 };
