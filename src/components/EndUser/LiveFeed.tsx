@@ -14,12 +14,12 @@ const textSizeClass: Record<TextSize, string> = {
 
 /* ─── speaker colors (up to 6, then cycles) ─────────────── */
 const speakerColors = [
-  { light: 'text-blue-700', dark: 'text-blue-400', bg: 'bg-blue-100 dark:bg-blue-900/40' },
-  { light: 'text-emerald-700', dark: 'text-emerald-400', bg: 'bg-emerald-100 dark:bg-emerald-900/40' },
-  { light: 'text-purple-700', dark: 'text-purple-400', bg: 'bg-purple-100 dark:bg-purple-900/40' },
-  { light: 'text-amber-700', dark: 'text-amber-400', bg: 'bg-amber-100 dark:bg-amber-900/40' },
-  { light: 'text-rose-700', dark: 'text-rose-400', bg: 'bg-rose-100 dark:bg-rose-900/40' },
-  { light: 'text-cyan-700', dark: 'text-cyan-400', bg: 'bg-cyan-100 dark:bg-cyan-900/40' },
+  { light: 'text-blue-700',    dark: 'text-blue-400',    bgLight: 'bg-blue-100',    bgDark: 'bg-blue-900/40',    border: 'border-blue-400' },
+  { light: 'text-emerald-700', dark: 'text-emerald-400', bgLight: 'bg-emerald-100', bgDark: 'bg-emerald-900/40', border: 'border-emerald-400' },
+  { light: 'text-purple-700',  dark: 'text-purple-400',  bgLight: 'bg-purple-100',  bgDark: 'bg-purple-900/40',  border: 'border-purple-400' },
+  { light: 'text-amber-700',   dark: 'text-amber-400',   bgLight: 'bg-amber-100',   bgDark: 'bg-amber-900/40',   border: 'border-amber-400' },
+  { light: 'text-rose-700',    dark: 'text-rose-400',    bgLight: 'bg-rose-100',    bgDark: 'bg-rose-900/40',    border: 'border-rose-400' },
+  { light: 'text-cyan-700',    dark: 'text-cyan-400',    bgLight: 'bg-cyan-100',    bgDark: 'bg-cyan-900/40',    border: 'border-cyan-400' },
 ];
 
 function getSpeakerColor(speaker: string) {
@@ -165,23 +165,34 @@ function SpeakerGroupList({ groups, textSize, dark }: {
   textSize: TextSize;
   dark: boolean;
 }) {
-  const hasMultipleSpeakers = new Set(groups.map((g) => g.speaker).filter(Boolean)).size > 1;
+  const uniqueSpeakers = new Set(groups.map((g) => g.speaker).filter(Boolean));
+  const hasSpeakers = uniqueSpeakers.size > 0;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {groups.map((group, gi) => {
         const color = group.speaker ? getSpeakerColor(group.speaker) : null;
-        const showLabel = hasMultipleSpeakers && group.speaker;
 
         return (
-          <div key={gi}>
-            {showLabel && color && (
-              <div className={`inline-block text-xs font-bold px-2 py-0.5 rounded-md mb-1 ${
-                dark ? color.bg + ' ' + color.dark : color.bg + ' ' + color.light
+          <div
+            key={gi}
+            className={`${hasSpeakers && color ? `border-l-3 pl-3 ${color.border}` : ''}`}
+          >
+            {/* Speaker label */}
+            {hasSpeakers && group.speaker && color && (
+              <div className={`inline-flex items-center gap-1.5 text-xs font-bold px-2 py-0.5 rounded-md mb-1.5 ${
+                dark
+                  ? `${color.bgDark} ${color.dark}`
+                  : `${color.bgLight} ${color.light}`
               }`}>
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+                </svg>
                 Orador {group.speaker}
               </div>
             )}
+
+            {/* Text block */}
             <p className={`whitespace-pre-wrap ${textSizeClass[textSize]} ${
               dark ? 'text-gray-100' : 'text-gray-900'
             }`}>

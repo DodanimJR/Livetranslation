@@ -190,6 +190,7 @@ export class SonioxService {
       num_channels: 1,
       language_hints: [sourceLanguage, targetLanguage],
       enable_language_identification: true,
+      enable_speaker_diarization: true,
       enable_endpoint_detection: true,
       context: {
         general: [
