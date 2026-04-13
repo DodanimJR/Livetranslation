@@ -61,7 +61,7 @@ export const LiveFeed: React.FC = () => {
       {/* Translation panel (shown first – most useful to viewers) */}
       <Card padding="lg" className="min-h-[24rem] flex flex-col">
         <div className="flex items-center gap-2 mb-4">
-          <h2 className="text-2xl font-bold text-gray-900">Traduccion (EN)</h2>
+          <h2 className="text-2xl font-bold text-gray-900">Traduccion / Live Translation (EN)</h2>
           {isLive && (
             <span className="flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm font-semibold">
               <span className="w-2 h-2 bg-red-600 rounded-full animate-pulse" />
@@ -108,10 +108,8 @@ function EmptyState({ text }: { text: string }) {
 
 function TokenList({ entries }: { entries: TranscriptEntry[] }) {
   return (
-    <div className="text-lg leading-relaxed text-gray-900">
-      {entries.map((entry) => (
-        <span key={entry.id}>{entry.text}</span>
-      ))}
-    </div>
+    <p className="text-lg leading-relaxed text-gray-900 whitespace-pre-wrap">
+      {entries.map((entry) => entry.text).join('')}
+    </p>
   );
 }

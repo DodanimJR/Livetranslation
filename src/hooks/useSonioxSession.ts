@@ -20,8 +20,9 @@ export const useSonioxSession = () => {
         if (!token.text) continue;
 
         // Filter out Soniox control tokens like <end>, <eos>, etc.
-        const cleaned = token.text.replace(/<\/?[a-z]+>/gi, '').trim();
-        if (!cleaned) continue;
+        // Preserve leading/trailing spaces — they are word separators.
+        const cleaned = token.text.replace(/<\/?[a-z]+>/gi, '');
+        if (!cleaned.trim()) continue;
 
         const isTranslation = token.translation_status === 'translation';
         const type = isTranslation ? 'translation' : 'transcription';
