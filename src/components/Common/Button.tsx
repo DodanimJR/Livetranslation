@@ -13,24 +13,36 @@ export const Button: React.FC<ButtonProps> = ({
   isLoading = false,
   children,
   disabled,
+  className = '',
   ...props
 }) => {
-  const baseStyles = 'font-semibold rounded-lg transition-all duration-200 flex items-center justify-center gap-2';
+  const baseStyles = [
+    'font-semibold rounded-lg flex items-center justify-center gap-2',
+    'transition-all duration-150 ease-in-out',
+    'active:scale-95 active:brightness-90',
+    'focus:outline-none focus:ring-2 focus:ring-offset-2',
+    'cursor-pointer select-none',
+    'disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100',
+  ].join(' ');
 
   const variantStyles = {
-    primary: 'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-gray-400',
-    secondary: 'bg-gray-600 hover:bg-gray-700 text-white disabled:bg-gray-400',
-    danger: 'bg-red-600 hover:bg-red-700 text-white disabled:bg-gray-400',
-    success: 'bg-green-600 hover:bg-green-700 text-white disabled:bg-gray-400',
+    primary:
+      'bg-blue-600 hover:bg-blue-700 text-white shadow-md hover:shadow-lg focus:ring-blue-500',
+    secondary:
+      'bg-gray-200 hover:bg-gray-300 text-gray-800 shadow-sm hover:shadow-md focus:ring-gray-400',
+    danger:
+      'bg-red-600 hover:bg-red-700 text-white shadow-md hover:shadow-lg focus:ring-red-500',
+    success:
+      'bg-green-600 hover:bg-green-700 text-white shadow-md hover:shadow-lg focus:ring-green-500',
   };
 
   const sizeStyles = {
     sm: 'px-3 py-2 text-sm',
-    md: 'px-4 py-2.5 text-base',
-    lg: 'px-6 py-3 text-lg',
+    md: 'px-5 py-2.5 text-base',
+    lg: 'px-6 py-3.5 text-lg',
   };
 
-  const buttonClass = `${baseStyles} ${variantStyles[variant]} ${sizeStyles[size]}`;
+  const buttonClass = `${baseStyles} ${variantStyles[variant]} ${sizeStyles[size]} ${className}`;
 
   return (
     <button

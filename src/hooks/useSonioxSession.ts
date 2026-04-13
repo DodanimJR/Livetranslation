@@ -19,13 +19,17 @@ export const useSonioxSession = () => {
       for (const token of tokens) {
         if (!token.text) continue;
 
+        // Filter out Soniox control tokens like <end>, <eos>, etc.
+        const cleaned = token.text.replace(/<\/?[a-z]+>/gi, '').trim();
+        if (!cleaned) continue;
+
         const isTranslation = token.translation_status === 'translation';
         const type = isTranslation ? 'translation' : 'transcription';
 
         if (token.is_final) {
           const entry = {
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            text: token.text,
+            text: cleaned,
             language: token.language || 'unknown',
             type: type as 'transcription' | 'translation',
             sourceLanguage: token.source_language,
