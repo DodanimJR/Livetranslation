@@ -184,7 +184,8 @@ export class SonioxService {
   private buildConfig(sourceLanguage: string, targetLanguage: string) {
     return {
       api_key: this.temporaryApiKey,
-      model: 'stt-rt-preview',
+      model: 'stt-rt-v4',
+      quality_level: 1,
       audio_format: 'pcm_s16le',
       sample_rate: 16000,
       num_channels: 1,
