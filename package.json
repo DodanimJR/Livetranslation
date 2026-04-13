@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:server": "node --loader tsx server/index.ts",
+    "dev:server": "node --import tsx/esm server/index.ts",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:server\"",
     "build": "tsc && vite build",
     "build:server": "tsc server/index.ts --outDir dist/server --module esnext --target es2020",
